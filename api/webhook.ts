@@ -27,9 +27,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return res.status(401).json({ error: 'Invalid signature' });
   }
 
-  // LINE webhook には 200 を即座に返す必要がある
-  res.status(200).json({ status: 'ok' });
-
   const body = JSON.parse(rawBody.toString('utf-8'));
   const events: unknown[] = body.events ?? [];
 
@@ -37,6 +34,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (!isTextMessageEvent(event)) continue;
     await handleCommand(event.source.userId, event.message.text.trim(), event.replyToken);
   }
+
+  res.status(200).json({ status: 'ok' });
 }
 
 interface TextMessageEvent {
