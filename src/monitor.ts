@@ -39,7 +39,11 @@ export async function runMonitor(): Promise<void> {
     await updateLastStatus(watched.date, newStatus);
 
     const oldStatus = watched.lastStatus;
-    if (isImprovement(oldStatus, newStatus)) {
+    // 初回スキャンですでに空きがある場合も通知
+    const shouldNotify =
+      (oldStatus === null && newStatus !== '×') || isImprovement(oldStatus, newStatus);
+
+    if (shouldNotify) {
       changes.push({
         date: watched.date,
         oldStatus,
@@ -81,9 +85,20 @@ function buildNotificationMessage(change: StatusChange): string {
     '△': '△ 残りわずか',
     '×': '× 満員',
   };
-  const from = change.oldStatus ? (label[change.oldStatus] ?? change.oldStatus) : '不明';
   const to = label[change.newStatus] ?? change.newStatus;
 
+  // 初回スキャンで空きがある場合
+  if (change.oldStatus === null) {
+    return [
+      '【ふもとっぱら空き通知】',
+      `${change.date} は現在 ${to} です！`,
+      '',
+      '予約はこちら:',
+      'https://reserve.fumotoppara.net/',
+    ].join('\n');
+  }
+
+  const from = label[change.oldStatus] ?? change.oldStatus;
   return [
     '【ふもとっぱら空き通知】',
     `${change.date} の空き状況が変わりました！`,
