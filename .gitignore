@@ -1,0 +1,9 @@
+node_modules/
+dist/
+.env
+.vercel/
+debug*.png
+debug*.html
+*.log
+
+.vercel
