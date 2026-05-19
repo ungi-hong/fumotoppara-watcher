@@ -35,6 +35,10 @@ export async function replyMessage(replyToken: string, text: string): Promise<vo
   });
 }
 
+export async function replyMessages(replyToken: string, messages: unknown[]): Promise<void> {
+  await linePost(`${LINE_API_BASE}/message/reply`, { replyToken, messages });
+}
+
 export async function pushMessage(userId: string, text: string): Promise<void> {
   await linePost(`${LINE_API_BASE}/message/push`, {
     to: userId,
