@@ -1,4 +1,4 @@
-import { chromium, Page } from 'playwright';
+import { chromium } from 'playwright';
 import type { ScrapedDateStatus } from './types';
 
 const CALENDAR_URL =
@@ -23,12 +23,6 @@ export async function scrapeAvailability(
 
     await page.goto(CALENDAR_URL, { waitUntil: 'domcontentloaded', timeout: 30000 });
 
-    // ログインページにリダイレクトされた場合のみログイン処理
-    if (page.url().includes('login') || page.url().includes('Login')) {
-      await performLogin(page);
-      await page.goto(CALENDAR_URL, { waitUntil: 'domcontentloaded', timeout: 30000 });
-    }
-
     // デバッグ用スクリーンショット（初回DOM確認のために保持）
     if (process.env.DEBUG_SCRAPER) {
       await page.screenshot({ path: 'debug-calendar.png', fullPage: true });
@@ -51,29 +45,6 @@ export async function scrapeAvailability(
   } finally {
     await browser.close();
   }
-}
-
-async function performLogin(page: Page): Promise<void> {
-  const email = process.env.FUMOTOPPARA_EMAIL;
-  const password = process.env.FUMOTOPPARA_PASSWORD;
-
-  if (!email || !password) {
-    throw new Error(
-      'ログインが必要ですが FUMOTOPPARA_EMAIL / FUMOTOPPARA_PASSWORD が設定されていません'
-    );
-  }
-
-  await page.waitForSelector('input[name="username"], input[type="email"]', {
-    timeout: 15000,
-  });
-
-  await page.fill('input[name="username"], input[type="email"]', email);
-  await page.fill('input[name="password"], input[type="password"]', password);
-  await page.click('button[type="submit"], input[type="submit"]');
-
-  await page.waitForURL((url) => !url.toString().toLowerCase().includes('login'), {
-    timeout: 20000,
-  });
 }
 
 async function waitForCalendar(page: Page): Promise<void> {
