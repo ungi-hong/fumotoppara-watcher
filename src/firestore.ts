@@ -8,7 +8,7 @@ export function getDb(): Firestore {
   if (!db) {
     if (!getApps().length) {
       initializeApp({
-        credential: cert(JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT_JSON!)),
+        credential: cert(JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT_JSON!.replace(/^'|'$/g, ''))),
       });
     }
     db = getFirestore();
