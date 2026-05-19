@@ -1,4 +1,4 @@
-import { getAllWatchedDates, updateLastStatus } from './firestore';
+import { getAllWatchedDates, updateLastStatus, unregisterDate } from './firestore';
 import { scrapeAvailability } from './scraper';
 import { pushMessage } from './line';
 import type { WatchedDateDoc, StatusChange } from './types';
@@ -62,6 +62,8 @@ export async function runMonitor(): Promise<void> {
       try {
         await pushMessage(userId, message);
         console.log(`[monitor] 通知送信: ${userId} (${change.date})`);
+        await unregisterDate(userId, change.date);
+        console.log(`[monitor] 監視解除: ${userId} (${change.date})`);
       } catch (err) {
         console.error(`[monitor] 通知失敗 ${userId}:`, err);
       }
