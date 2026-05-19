@@ -1,4 +1,5 @@
-import { chromium } from 'playwright';
+import { chromium, type Page } from 'playwright';
+import * as fs from 'fs';
 import type { ScrapedDateStatus } from './types';
 
 const CALENDAR_URL =
@@ -21,23 +22,27 @@ export async function scrapeAvailability(
     });
     const page = await context.newPage();
 
-    await page.goto(CALENDAR_URL, { waitUntil: 'domcontentloaded', timeout: 30000 });
+    // networkidle でJSレンダリング完了まで待つ
+    await page.goto(CALENDAR_URL, { waitUntil: 'networkidle', timeout: 30000 });
 
-    // デバッグ用スクリーンショット（初回DOM確認のために保持）
+    // カレンダーのテーブルが現れるまで待機
+    await page.waitForSelector('table', { timeout: 15000 });
+    // データセルの描画を待つ
+    await page.waitForTimeout(2000);
+
     if (process.env.DEBUG_SCRAPER) {
       await page.screenshot({ path: 'debug-calendar.png', fullPage: true });
+      fs.writeFileSync('debug-calendar.html', await page.content(), 'utf-8');
     }
 
-    // カレンダーのロード待機
-    await waitForCalendar(page);
-
+    // 監視対象の年月ごとにナビゲートしてデータ取得
     const monthsNeeded = [...new Set(targetDates.map((d) => d.substring(0, 7)))];
     const results: ScrapedDateStatus[] = [];
 
     for (const yearMonth of monthsNeeded) {
       const [year, month] = yearMonth.split('-').map(Number);
       await navigateToMonth(page, year, month);
-      const monthResults = await extractMonthData(page, year, month);
+      const monthResults = await extractCalendarData(page, year);
       results.push(...monthResults.filter((r) => targetDates.includes(r.date)));
     }
 
@@ -47,169 +52,123 @@ export async function scrapeAvailability(
   }
 }
 
-async function waitForCalendar(page: Page): Promise<void> {
-  // 複数のセレクターパターンを試みる（Salesforce LWCのためDOM構造が不定）
-  const selectors = [
-    '[class*="calendar"]',
-    '[class*="Calendar"]',
-    'table',
-    '.fc-daygrid',
-    '[class*="month"]',
-  ];
-
-  for (const selector of selectors) {
-    try {
-      await page.waitForSelector(selector, { timeout: 5000 });
-      return;
-    } catch {
-      // 次のセレクターを試す
-    }
+// 月ボタン（5月, 6月...）をクリックして対象月を表示する
+async function navigateToMonth(page: Page, year: number, month: number): Promise<void> {
+  // まず対象月のボタンをクリック（例: "6月"）
+  const monthLabel = `${month}月`;
+  try {
+    await page.click(`button:has-text("${monthLabel}"), a:has-text("${monthLabel}")`, {
+      timeout: 5000,
+    });
+    await page.waitForTimeout(1500);
+    return;
+  } catch {
+    // 月ボタンが見つからない場合は > ボタンで進む
   }
 
-  // どのセレクターも見つからない場合は追加待機
-  await page.waitForTimeout(3000);
-}
+  // > ボタンで前後にナビゲート
+  for (let i = 0; i < 12; i++) {
+    const visible = await isTargetDateVisible(page, year, month);
+    if (visible) return;
 
-async function navigateToMonth(page: Page, year: number, month: number): Promise<void> {
-  for (let i = 0; i < 24; i++) {
-    const current = await getCurrentDisplayedYearMonth(page);
-    if (!current) break;
-    if (current.year === year && current.month === month) return;
-
-    const isForward = year * 12 + month > current.year * 12 + current.month;
-
-    // 次/前月ボタンの候補セレクター
-    const nextSelectors = [
-      '[aria-label*="次"]',
-      '[aria-label*="next"]',
-      'button.fc-next-button',
-      '[title*="次の月"]',
-      'button:has-text(">")',
-      'button:has-text("▶")',
-      'button:has-text("→")',
-    ];
-    const prevSelectors = [
-      '[aria-label*="前"]',
-      '[aria-label*="prev"]',
-      'button.fc-prev-button',
-      '[title*="前の月"]',
-      'button:has-text("<")',
-      'button:has-text("◀")',
-      'button:has-text("←")',
-    ];
-
-    const candidates = isForward ? nextSelectors : prevSelectors;
-    let clicked = false;
-
-    for (const sel of candidates) {
-      try {
-        await page.click(sel, { timeout: 3000 });
-        clicked = true;
-        break;
-      } catch {
-        // 次のセレクターを試す
-      }
-    }
-
-    if (!clicked) {
-      console.warn(`[scraper] 月ナビゲーションボタンが見つかりません (${year}-${month})`);
+    try {
+      // カレンダー上部の > ボタン
+      await page.click('button:has-text(">")', { timeout: 3000 });
+      await page.waitForTimeout(1500);
+    } catch {
       break;
     }
-
-    await page.waitForTimeout(1500);
   }
 }
 
-async function getCurrentDisplayedYearMonth(
-  page: Page
-): Promise<{ year: number; month: number } | null> {
-  const headerText = await page.evaluate(() => {
-    const candidates = [
-      '[class*="calendar-title"]',
-      '[class*="calendarTitle"]',
-      '.fc-toolbar-title',
-      '[class*="month-title"]',
-      '[class*="monthTitle"]',
-      'h1',
-      'h2',
-      'h3',
-    ].map((s) => document.querySelector(s));
-
-    for (const el of candidates) {
-      const text = el?.textContent ?? '';
-      if (/\d{4}.*\d{1,2}/.test(text) || /\d{1,2}.*\d{4}/.test(text)) {
-        return text;
-      }
-    }
-    return null;
-  });
-
-  if (!headerText) return null;
-
-  const match =
-    headerText.match(/(\d{4})[年\/\-](\d{1,2})/) ||
-    headerText.match(/(\d{1,2})[月\/\-](\d{4})/);
-  if (!match) return null;
-
-  // "YYYY年MM月" と "MM月YYYY年" の両形式を処理
-  const a = parseInt(match[1]);
-  const b = parseInt(match[2]);
-  const year = a > 12 ? a : b;
-  const month = a > 12 ? b : a;
-
-  return { year, month };
+// 対象の年月のセルがカレンダー上に見えているか確認
+async function isTargetDateVisible(page: Page, year: number, month: number): Promise<boolean> {
+  return await page.evaluate(
+    ({ month }: { year: number; month: number }) => {
+      const allText = document.body.innerText;
+      // "M/1" や "M/01" 形式で月初のセルが見えているか
+      return allText.includes(`${month}/1`) || allText.includes(`${month}/01`);
+    },
+    { year, month }
+  );
 }
 
-async function extractMonthData(
-  page: Page,
-  year: number,
-  month: number
-): Promise<ScrapedDateStatus[]> {
+// カレンダーテーブルをパースして全日付のステータスを返す
+// 構造: ヘッダー行に "M/D" 形式の日付、データ行に ×/○/△/残N
+async function extractCalendarData(page: Page, year: number): Promise<ScrapedDateStatus[]> {
   return await page.evaluate(
-    ({ year, month }) => {
+    ({ year }: { year: number }) => {
       const results: { date: string; status: string }[] = [];
       const pad = (n: number) => String(n).padStart(2, '0');
+      const statusRank: Record<string, number> = { '○': 2, '△': 1, '×': 0 };
 
       const parseStatus = (text: string): string | null => {
-        if (text.includes('○') || text.includes('〇')) return '○';
-        if (text.includes('△')) return '△';
-        if (text.includes('×') || text.includes('✕') || text.includes('✗')) return '×';
+        const t = text.trim();
+        if (t.includes('○') || t.includes('〇')) return '○';
+        if (t.includes('△')) return '△';
+        if (/残\d/.test(t)) return '△'; // 残N枠 = △扱い
+        if (t.includes('×') || t.includes('✕')) return '×';
         return null;
       };
 
-      // 戦略1: data-date 属性を持つセル
-      const dateCells = document.querySelectorAll<HTMLElement>('[data-date], [data-day]');
-      if (dateCells.length > 0) {
-        dateCells.forEach((cell) => {
-          const attr = cell.dataset.date ?? cell.dataset.day ?? '';
-          if (!attr) return;
-          // YYYY-MM-DD 形式、または MM/DD 形式を処理
-          let date = attr;
-          if (/^\d{1,2}\/\d{1,2}$/.test(attr)) {
-            const [m, d] = attr.split('/').map(Number);
-            date = `${year}-${pad(m)}-${pad(d)}`;
-          }
-          const status = parseStatus(cell.textContent ?? '');
-          if (status) results.push({ date, status });
-        });
-        if (results.length > 0) return results;
-      }
+      // 全テーブル行を取得
+      const rows = Array.from(document.querySelectorAll('tr'));
+      if (rows.length === 0) return results;
 
-      // 戦略2: テーブルセルのテキストから日付+ステータスを抽出
-      const cells = document.querySelectorAll('td, [class*="day-cell"], [class*="dayCell"], [class*="day_cell"]');
-      cells.forEach((cell) => {
+      // ヘッダー行: "M/D" 形式のセルが最も多い行
+      let headerRow: Element | null = null;
+      let maxDateCells = 0;
+      for (const row of rows) {
+        const cells = Array.from(row.querySelectorAll('td, th'));
+        const count = cells.filter((c) => /^\d{1,2}\/\d{1,2}/.test((c.textContent ?? '').trim())).length;
+        if (count > maxDateCells) {
+          maxDateCells = count;
+          headerRow = row;
+        }
+      }
+      if (!headerRow || maxDateCells === 0) return results;
+
+      // 列インデックス → YYYY-MM-DD のマップを作成
+      const headerCells = Array.from(headerRow.querySelectorAll('td, th'));
+      const colToDate = new Map<number, string>();
+      const today = new Date();
+
+      headerCells.forEach((cell, colIdx) => {
         const text = (cell.textContent ?? '').trim();
-        const dayMatch = text.match(/^(\d{1,2})\D/);
-        if (!dayMatch) return;
-        const day = parseInt(dayMatch[1]);
-        if (day < 1 || day > 31) return;
-        const status = parseStatus(text);
-        if (!status) return;
-        results.push({ date: `${year}-${pad(month)}-${pad(day)}`, status });
+        const m = text.match(/^(\d{1,2})\/(\d{1,2})/);
+        if (!m) return;
+        const cellMonth = parseInt(m[1]);
+        const cellDay = parseInt(m[2]);
+        // 年の推定: 現在月±6ヶ月の範囲で判断
+        let cellYear = year;
+        if (cellMonth < today.getMonth() + 1 - 6) cellYear = year + 1;
+        if (cellMonth > today.getMonth() + 1 + 6) cellYear = year - 1;
+        colToDate.set(colIdx, `${cellYear}-${pad(cellMonth)}-${pad(cellDay)}`);
       });
 
+      if (colToDate.size === 0) return results;
+
+      // データ行を走査して日付ごとに最良ステータスを集計
+      const bestStatus = new Map<string, string>();
+      const dataRows = rows.filter((r) => r !== headerRow);
+
+      for (const row of dataRows) {
+        const cells = Array.from(row.querySelectorAll('td, th'));
+        cells.forEach((cell, colIdx) => {
+          const date = colToDate.get(colIdx);
+          if (!date) return;
+          const status = parseStatus(cell.textContent ?? '');
+          if (!status) return;
+          const current = bestStatus.get(date);
+          if (!current || (statusRank[status] ?? -1) > (statusRank[current] ?? -1)) {
+            bestStatus.set(date, status);
+          }
+        });
+      }
+
+      bestStatus.forEach((status, date) => results.push({ date, status }));
       return results;
     },
-    { year, month }
+    { year }
   );
 }
