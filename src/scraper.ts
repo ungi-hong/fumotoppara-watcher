@@ -148,9 +148,9 @@ async function extractCalendarData(page: Page, year: number): Promise<ScrapedDat
 
       if (colToDate.size === 0) return results;
 
-      // データ行を走査して日付ごとに最良ステータスを集計
+      // データ行を走査して日付ごとに最良ステータスを集計（キャンプ宿泊のみ）
       const bestStatus = new Map<string, string>();
-      const dataRows = rows.filter((r) => r !== headerRow);
+      const dataRows = rows.filter((r) => r !== headerRow && (r.textContent ?? '').includes('宿泊'));
 
       for (const row of dataRows) {
         const cells = Array.from(row.querySelectorAll('td, th'));
