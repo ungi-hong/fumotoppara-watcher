@@ -1,6 +1,7 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { verifySignature, replyMessage, replyMessages } from '../src/line';
-import { registerDate, unregisterDate, listDatesForUser } from '../src/firestore';
+import { registerDate, unregisterDate, listDatesForUser, getActiveWatchCount } from '../src/firestore';
+import { setJobEnabled } from '../src/cron-job';
 
 export const config = {
   api: { bodyParser: false },
@@ -103,6 +104,7 @@ async function handleTextCommand(userId: string, text: string, replyToken: strin
       return;
     }
     await registerDate(userId, date);
+    await syncCronJobState();
     await replyMessage(replyToken, `✅ ${date} の監視を開始しました。\n× から △ または ○ に変わったときにお知らせします。`);
     return;
   }
@@ -112,6 +114,7 @@ async function handleTextCommand(userId: string, text: string, replyToken: strin
   if (unregisterMatch) {
     const date = unregisterMatch[1];
     await unregisterDate(userId, date);
+    await syncCronJobState();
     await replyMessage(replyToken, `🗑 ${date} の監視を解除しました。`);
     return;
   }
@@ -160,6 +163,7 @@ async function handlePostback(
     const date = postback.params?.date;
     if (!date) return;
     await registerDate(userId, date);
+    await syncCronJobState();
     await replyMessage(replyToken, `✅ ${date} の監視を開始しました。\n× から △ または ○ に変わったときにお知らせします。`);
     return;
   }
@@ -168,8 +172,18 @@ async function handlePostback(
     const date = params.get('date');
     if (!date) return;
     await unregisterDate(userId, date);
+    await syncCronJobState();
     await replyMessage(replyToken, `🗑 ${date} の監視を解除しました。`);
     return;
+  }
+}
+
+async function syncCronJobState() {
+  try {
+    const count = await getActiveWatchCount();
+    await setJobEnabled(count > 0);
+  } catch (err) {
+    console.error('[webhook] syncCronJobState 失敗:', err);
   }
 }
 

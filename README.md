@@ -13,6 +13,7 @@
 - 空きが出たら LINE Push 通知
 - 通知後は自動で監視解除
 - 登録時点ですでに空きがある場合も即通知
+- 監視対象が 0 件のとき cron-job.org のジョブを自動 disable / 登録時に自動 enable
 
 ## アーキテクチャ
 
@@ -67,3 +68,5 @@ LINE Messaging API (Push)      ← 通知送信
 | `FIREBASE_SERVICE_ACCOUNT_JSON` | Firebase サービスアカウント JSON |
 | `LINE_CHANNEL_ACCESS_TOKEN` | LINE チャンネルアクセストークン |
 | `LINE_CHANNEL_SECRET` | LINE チャンネルシークレット |
+| `CRONJOB_API_KEY` | cron-job.org API キー（監視0件時の自動 disable に使用） |
+| `CRONJOB_JOB_ID` | cron-job.org のジョブID（数値） |

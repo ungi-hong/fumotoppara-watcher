@@ -63,6 +63,15 @@ export async function getAllWatchedDates(): Promise<WatchedDateDoc[]> {
   return snap.docs.map((d) => d.data() as WatchedDateDoc);
 }
 
+export async function getActiveWatchCount(): Promise<number> {
+  const snap = await getDb()
+    .collection('watchedDates')
+    .where('users', '!=', [])
+    .count()
+    .get();
+  return snap.data().count;
+}
+
 export async function updateLastStatus(date: string, status: string): Promise<void> {
   await getDb().collection('watchedDates').doc(date).update({ lastStatus: status });
 }
